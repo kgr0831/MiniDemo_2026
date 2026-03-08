@@ -1,5 +1,6 @@
 using UnityEngine;
 
+// Monster를 상속 (보스 몬스터)
 public class BossController : MonsterController
 {
     protected override void Awake()
