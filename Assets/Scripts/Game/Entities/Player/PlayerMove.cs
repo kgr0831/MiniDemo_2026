@@ -16,11 +16,14 @@ public class PlayerMove : MonoBehaviour
     public bool IsRunningPressed { get; private set; } // 쉬프트(Shift) 입력 여부
     
     [Header("Movement Settings")]
-    public float walkSpeedMultiplier = 0.5f; // 걷기 모드일 때 깎이는 속도 비율
+    public float runSpeedMultiplier = 1.5f; // 달리기 모드일 때 증가하는 속도 비율
+    public float runStaminaCostPerSec = 15f; // 달리기 중 초당 기력 소모량
+
 
     [Header("Dash Settings")]
     public float dashDistance = 5f; // 대시 총 이동 거리
     public float dashDuration = 0.4f; // 실제 대시가 지속되는 시간
+    public float dashStaminaCost = 20f; // 대시 1회당 기력 소모량
     public AnimationCurve dashSpeedCurve = AnimationCurve.EaseInOut(0, 1, 1, 0); // 대시 속도 곡선 (처음엔 빠르고 끝에 느려짐)
     
     [Header("Dash Visuals")]
@@ -93,6 +96,13 @@ public class PlayerMove : MonoBehaviour
             controller.animModule.UpdateMoveAnimation(dashDir, dashDir, true);
         }
 
+        // 스태미나 소모
+        if (controller.myData != null && controller.myData.stats != null)
+        {
+            controller.myData.stats.stamina -= dashStaminaCost;
+            if (controller.myData.stats.stamina < 0) controller.myData.stats.stamina = 0;
+        }
+
         // 무적 상태 돌입 및 반투명 처리
         if (controller.hitModule != null) controller.hitModule.IsInvincible = true;
         SetSpriteAlpha(dashAlpha);
@@ -151,17 +161,19 @@ public class PlayerMove : MonoBehaviour
         }
         else if (controller.currentState == PlayerState.Move || controller.currentState == PlayerState.Walk || controller.currentState == PlayerState.Idle)
         {
-            // 데이터 객체에서 스피드를 가져와서 적용 (기본 스피드 = 달리기 속도를 기준으로 삼음)
-            float currentSpeed = 3f;
+            // 데이터 객체에서 스피드를 가져와서 적용 (기본 스피드 = 걷기 속도 3.0)
+            float baseSpeed = 3f;
             if (controller.myData != null && controller.myData.stats != null)
             {
-                currentSpeed = controller.myData.stats.speed;
+                baseSpeed = controller.myData.stats.speed;
             }
 
-            // 걷기 상태면 속도를 절반(설정값)으로 감소
-            if (controller.currentState == PlayerState.Walk)
+            float currentSpeed = baseSpeed;
+            // 달리기(Move) 상태면 지정된 배율만큼 곱해서 속도 증가
+            if (controller.currentState == PlayerState.Move)
             {
-                currentSpeed *= walkSpeedMultiplier;
+                currentSpeed *= runSpeedMultiplier;
+                // 스태미나 소모 및 강제 걷기 전환 로직은 PlayerController.Update로 이관하여 프레임 꼬임 방지
             }
 
             rb.linearVelocity = moveInput * currentSpeed;
