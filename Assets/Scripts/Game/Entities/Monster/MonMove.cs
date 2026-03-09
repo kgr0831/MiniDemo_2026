@@ -29,6 +29,9 @@ public class MonMove : MonoBehaviour
     private Vector2 currentAvoidanceDir = Vector2.zero;
     private float avoidanceTimer = 0f;
     
+    // 지그재그 방지용 (Hysteresis)
+    private Vector2 lastPrimaryDir = Vector2.zero;
+    
     // Trigger 로 감지한 플레이어
     private Transform playerTransform;
 
@@ -57,8 +60,20 @@ public class MonMove : MonoBehaviour
 
         Vector2 primaryDir, secondaryDir;
 
+        float absX = Mathf.Abs(dir.x);
+        float absY = Mathf.Abs(dir.y);
+
+        // 기본적으로는 더 먼 축을 주 이동 방향으로 설정
+        bool preferX = absX > absY;
+
+        // Hysteresis (지그재그 방지): 이전에 이동하던 축을 계속 유지하려는 성질
+        // X축으로 이동 중이었고 그쪽으로 갈 길이 조금이라도(0.1f) 남아있으면 계속 X축 유지
+        if (Mathf.Abs(lastPrimaryDir.x) > 0.5f && absX > 0.1f) preferX = true;
+        // Y축으로 이동 중이었고 갈 길이 남아있으면 계속 Y축 유지 (예외: X축으로 남은 거리가 훨씬 길면 갱신)
+        if (Mathf.Abs(lastPrimaryDir.y) > 0.5f && absY > 0.1f) preferX = false;
+
         // X축과 Y축 차이 중 더 큰 쪽을 주 이동 방향(Primary)으로 설정
-        if (Mathf.Abs(dir.x) > Mathf.Abs(dir.y))
+        if (preferX)
         {
             primaryDir = new Vector2(Mathf.Sign(dir.x), 0f);
             secondaryDir = new Vector2(0f, Mathf.Sign(dir.y));
@@ -71,6 +86,8 @@ public class MonMove : MonoBehaviour
             secondaryDir = new Vector2(Mathf.Sign(dir.x), 0f);
             if (secondaryDir == Vector2.zero) secondaryDir = new Vector2(1f, 0f);
         }
+
+        lastPrimaryDir = primaryDir; // 다음 프레임을 위해 저장
 
         // 1. 회피 모드: 회피 타이머가 켜져 있으면, 현재 회피 방향을 먼저 유지해본다 (기둥에 비비기)
         if (avoidanceTimer > 0f)
@@ -127,15 +144,19 @@ public class MonMove : MonoBehaviour
     /// </summary>
     private bool IsDirectionBlocked(Vector2 dir)
     {
-        // 중심에서 해당 방향으로 0.8 유닛 길이의 레이캐스트를 쏨
-        RaycastHit2D hit = Physics2D.Raycast(transform.position, dir, 0.8f);
+        // RaycastAll을 사용하여 처음 맞은 게 자기 자신이더라도 뒤에 있는 장애물을 제대로 감지하도록 합니다.
+        // 레이 길이를 1.5f로 넉넉하게 늘려 미리 감지하게 합니다.
+        RaycastHit2D[] hits = Physics2D.RaycastAll(transform.position, dir, 1.5f);
         
-        if (hit.collider != null && !hit.collider.isTrigger && hit.collider.gameObject != gameObject)
+        foreach (RaycastHit2D hit in hits)
         {
-            // 플레이어는 장애물로 치지 않음 (때리러 가야 하니까 통과)
-            if (hit.collider.GetComponent<PlayerController>() == null)
+            if (hit.collider != null && !hit.collider.isTrigger && hit.collider.gameObject != gameObject)
             {
-                return true; // 돌이나 나무에 막힘!
+                // 플레이어는 장애물로 치지 않음 (때리러 가야 하니까 통과)
+                if (hit.collider.GetComponent<PlayerController>() == null)
+                {
+                    return true; // 돌이나 나무에 막힘!
+                }
             }
         }
         return false;
@@ -221,11 +242,11 @@ public class MonMove : MonoBehaviour
     }
 
     /// <summary>
-    /// 플레이어가 Trigger 범위를 벗어남
+    /// 플레이어가 감지 범위를 벗어남 (이제 한 번 물면 절대 놓지 않음)
     /// </summary>
     public bool IsPlayerOutOfRange()
     {
-        return playerTransform == null;
+        return false; // 한 번 감지한 플레이어는 절대 놓치지 않습니다.
     }
 
     public bool IsPlayerInAttackRange()
@@ -250,30 +271,20 @@ public class MonMove : MonoBehaviour
         patrolTarget = spawnPosition + Random.insideUnitCircle * patrolRadius;
     }
 
-    // ──────────────── Trigger 감지 로직 ────────────────
-
     // 몬스터에 부착된 CircleCollider2D (IsTrigger=true) 안으로 무언가 들어올 때
     void OnTriggerEnter2D(Collider2D other)
     {
-        // 이름이나 태그 대신 컴포넌트로 플레이어 유무 확인
+        if (playerTransform != null) return; // 이미 감지했으면 무시
+
         PlayerController player = other.GetComponent<PlayerController>();
         if (player != null)
         {
             playerTransform = player.transform;
-            Debug.Log($"[MonMove] 플레이어 감지! 추적을 시작합니다.");
+            Debug.Log($"[MonMove] 플레이어 최초 감지! 이제 끝까지 쫓아갑니다.");
         }
     }
 
-    // 플레이어가 시야 밖으로 나갈 때
-    void OnTriggerExit2D(Collider2D other)
-    {
-        PlayerController player = other.GetComponent<PlayerController>();
-        if (player != null && player.transform == playerTransform)
-        {
-            playerTransform = null; // 타겟 소실 -> 배회 모드로 복귀
-            Debug.Log($"[MonMove] 플레이어를 잃어버렸습니다.");
-        }
-    }
+    // OnTriggerExit2D는 삭제했습니다. (한 번 감지하면 놓치지 않음)
 
     void OnDrawGizmosSelected()
     {
