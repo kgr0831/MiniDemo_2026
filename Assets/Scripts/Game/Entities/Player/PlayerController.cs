@@ -40,6 +40,7 @@ public class PlayerController : MonoBehaviour
         myData.stats.stamina = myData.stats.maxStamina; // 게임 시작 시 항상 최대 기력으로 시작
         myData.stats.isExhausted = false; // 탈진 상태 초기화
         if (myData.stats.staminaRecoveryRate <= 0f) myData.stats.staminaRecoveryRate = 10f; // 초당 10 회복
+        if (myData.stats.gatherPower <= 0) myData.stats.gatherPower = 10; // 기본 채집 능력
         
         ChangeState(PlayerState.Idle);
     }
@@ -83,15 +84,6 @@ public class PlayerController : MonoBehaviour
                             ChangeState(PlayerState.Dash);
                         }
                     }
-                    else if (Input.GetMouseButtonDown(1) && currentState != PlayerState.Tool)
-                    {
-                        // 우클릭 -> 도구(채집) 사용 (오직 이동/대기중일 때만 가능)
-                        if (toolModule != null)
-                        {
-                            toolModule.StartTool();
-                            ChangeState(PlayerState.Tool);
-                        }
-                    }
                 }
                 break;
 
@@ -109,9 +101,7 @@ public class PlayerController : MonoBehaviour
                 }
                 break;
 
-            case PlayerState.Tool:
-                if (toolModule != null) toolModule.HandleTool();
-                break;
+            // Tool 상태는 공격과 통합되어 더 이상 사용하지 않음
 
             case PlayerState.Hit:
             case PlayerState.Dead:
