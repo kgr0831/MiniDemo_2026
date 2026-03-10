@@ -1124,7 +1124,7 @@ Transform:
   m_GameObject: {fileID: 827423465}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: -5.655806, y: 3.9258657, z: 0}
+  m_LocalPosition: {x: 0.021, y: -0.186, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -1556,7 +1556,7 @@ Transform:
   m_GameObject: {fileID: 974734494}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 6.41185, y: -0.36127007, z: 0}
+  m_LocalPosition: {x: 5.653, y: -0.716, z: 0}
   m_LocalScale: {x: 1.0041, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -1770,7 +1770,10 @@ MonoBehaviour:
   attackRange: 1.2
   targetLayerMask:
     serializedVersion: 2
-    m_Bits: 4294967295
+    m_Bits: 256
+  obstacleLayerMask:
+    serializedVersion: 2
+    m_Bits: 64
   lastMoveDir: {x: 0, y: -1}
 --- !u!114 &974734505
 MonoBehaviour:

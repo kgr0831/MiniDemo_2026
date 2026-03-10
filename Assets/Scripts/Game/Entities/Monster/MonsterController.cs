@@ -204,6 +204,9 @@ public class MonsterController : MonoBehaviour, IDamageable
             {
                 Vector2 knockDir = -moveModule.GetDirectionToPlayer();
                 rb.linearVelocity = knockDir * knockbackForce;
+
+                // 넉백 시 기존 A* 경로 초기화 (바로 방향 전환 방지)
+                moveModule.InvalidatePath();
             }
         }
     }

@@ -19,6 +19,7 @@ public class MonMove : MonoBehaviour
     [Header("하이브리드 추적 설정")]
     public float attackRange = 1.2f;       // 공격 사거리
     public LayerMask targetLayerMask = ~0; // Player와 Wall(장애물)이 포함된 레이어
+    public LayerMask obstacleLayerMask;    // 순수 벽(장애물)만 포함된 레이어 (배회 목적지 검사용)
 
     // 내부 변수
     [HideInInspector] public Vector2 lastMoveDir = Vector2.down;
@@ -30,6 +31,7 @@ public class MonMove : MonoBehaviour
 
     // 지그재그 방지용 (Hysteresis)
     private Vector2 lastPrimaryDir = Vector2.zero;
+    private Vector2 currentSlideDir = Vector2.zero; // ★ 슬라이딩 방향 유지용
     
     // Trigger 로 감지한 플레이어
     private Transform playerTransform;
@@ -40,6 +42,11 @@ public class MonMove : MonoBehaviour
     private int currentPathIndex = 0;
     private Vector2 lastPathTarget;          // 마지막으로 경로를 구했을 때의 플레이어 위치
     private float pathRecalcThreshold = 2f;  // 플레이어가 이 이상 움직여야 경로 재계산
+
+    // 시야 떨림(Jitter) 방지용 (Debounce)
+    private int losConfirmCount = 0;
+    private const int LosConfirmThreshold = 3; // 3회 연속 동일 판정 시 전환
+    private bool currentLineOfSightState = true;
 
     void Awake()
     {
@@ -57,7 +64,7 @@ public class MonMove : MonoBehaviour
 
     IEnumerator UpdateChaseLogicRoutine()
     {
-        WaitForSeconds chaseWait = new WaitForSeconds(0.2f);
+        WaitForSeconds chaseWait = new WaitForSeconds(0.1f);
         while (true)
         {
             // 플레이어가 Trigger를 통해 감지된 상태(= Chase 상태)일 때만 가동
@@ -65,7 +72,7 @@ public class MonMove : MonoBehaviour
             {
                 PerformHybridChaseDecision();
             }
-            yield return chaseWait; // 0.2초 쿨타임 (최적화)
+            yield return chaseWait; // 0.1초 쿨타임 (기존 0.2초에서 단축)
         }
     }
 
@@ -74,10 +81,15 @@ public class MonMove : MonoBehaviour
         Vector2 directionToPlayer = (playerTransform.position - transform.position).normalized;
         float distanceToPlayer = Vector2.Distance(transform.position, playerTransform.position);
 
-        // 1. Raycast 발사 (눈 역할) - 자신 통과를 위해 All 사용
-        RaycastHit2D[] hits = Physics2D.RaycastAll(transform.position, directionToPlayer, distanceToPlayer, targetLayerMask);
+        // 1. Raycast 발사 (눈 역할) - 선이 얇아서 기둥 옆을 긁고 가는 문제를 해결하기 위해 CircleCast 적용
+        // 슬라임의 반경보다 약간 작은 원통을 발사하여, 너무 민감하게 벽에 스쳤다고 오판하지 않도록 함.
+        float losThickness = 0.2f; 
+        RaycastHit2D[] hits = Physics2D.CircleCastAll(transform.position, losThickness, directionToPlayer, distanceToPlayer, targetLayerMask);
 
-        bool hasLineOfSight = true; // 아무것도 안맞으면 벽 없음 = 시야 확보
+        // ★ 핵심 수정: 거리순 정렬하여 벽 뒤의 플레이어를 오판하지 않도록 함
+        System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+
+        bool rawLineOfSight = true; // 아무것도 안맞으면 벽 없음 = 시야 확보
 
         foreach (RaycastHit2D hit in hits)
         {
@@ -88,19 +100,34 @@ public class MonMove : MonoBehaviour
             if (hit.collider.GetComponent<PlayerController>() != null || hit.collider.CompareTag("Player"))
             {
                 // [상황 A: 시야 확보]
-                hasLineOfSight = true;
+                rawLineOfSight = true;
                 break;
             }
             else
             {
                 // [상황 B: 시야 차단(벽)]
-                hasLineOfSight = false;
+                rawLineOfSight = false;
                 break;
             }
         }
 
+        // ★ 핵심 수정: 시야 떨림(Jitter) 방지를 위한 Debounce 로직
+        if (rawLineOfSight == currentLineOfSightState)
+        {
+            losConfirmCount = 0;
+        }
+        else
+        {
+            losConfirmCount++;
+            if (losConfirmCount >= LosConfirmThreshold)
+            {
+                currentLineOfSightState = rawLineOfSight;
+                losConfirmCount = 0;
+            }
+        }
+
         // 2. 하이브리드 분기 (상태 업데이트)
-        if (hasLineOfSight)
+        if (currentLineOfSightState)
         {
             // A* 정지 및 Vector 직선 이동 플래그 켜기
             isPathfinding = false;
@@ -164,6 +191,7 @@ public class MonMove : MonoBehaviour
             {
                 isWaiting = false;
                 SetNewPatrolTarget();
+                Debug.Log($"[MonMove] 대기 시간 끝. 새로운 배회 목적지 설정: {patrolTarget}");
             }
             rb.linearVelocity = Vector2.zero;
             return;
@@ -171,11 +199,13 @@ public class MonMove : MonoBehaviour
 
         float distance = Vector2.Distance(transform.position, patrolTarget);
 
-        if (distance < 0.2f)
+        // 직교 이동은 정확히 점에 도달하기 힘드므로 거리를 넉넉하게 체크
+        if (distance < 0.5f)
         {
             isWaiting = true;
             patrolWaitTimer = Random.Range(patrolWaitMin, patrolWaitMax);
             rb.linearVelocity = Vector2.zero;
+            Debug.Log($"[MonMove] 배회 목적지 도달! 대기 시작 ({patrolWaitTimer:F1}초). 현재 위치: {transform.position}");
         }
         else
         {
@@ -183,6 +213,8 @@ public class MonMove : MonoBehaviour
             Vector2 moveDir = GetStrictOrthogonalDirection(patrolTarget);
             rb.linearVelocity = moveDir * moveSpeed;
             if (moveDir != Vector2.zero) lastMoveDir = moveDir;
+            
+            // 너무 로그가 많으면 곤란하므로 생략하지만, 이동 중임을 알 수 있음
         }
     }
 
@@ -204,8 +236,8 @@ public class MonMove : MonoBehaviour
             {
                 Vector2 targetTile = aStarPath[currentPathIndex];
                 
-                // 타일에 대략 도달하면 다음 타일로 (여유를 0.3f로 늘려 부드러움 방지)
-                if (Vector2.Distance(transform.position, targetTile) < 0.3f)
+                // 타일에 대략 도달하면 다음 타일로 (여유를 0.15f로 줄여 좁은 통로 충돌 방지)
+                if (Vector2.Distance(transform.position, targetTile) < 0.15f)
                 {
                     currentPathIndex++;
                     if (currentPathIndex >= aStarPath.Count) 
@@ -216,9 +248,9 @@ public class MonMove : MonoBehaviour
                     targetTile = aStarPath[currentPathIndex];
                 }
 
-                // ★ A* 경로를 따라갈 때는 Hysteresis 없이 단순 축 스냅!
-                // A* 노드가 "위로 꺾어" 라고 하면 즉시 위로 꺾어야 함 (관성이 방해하면 안 됨)
-                Vector2 moveDir = GetSimpleOrthogonalSnap(targetTile);
+                // ★ A* 경로를 따라갈 때는 Hysteresis 없이 부드러운 직교 스냅
+                // 기존 단순 스냅이 너무 거칠어 떨림(Jitter)을 유발하므로 보완
+                Vector2 moveDir = GetSmoothOrthogonalSnap(targetTile);
                 rb.linearVelocity = moveDir * chaseSpeed;
                 if (moveDir != Vector2.zero) lastMoveDir = moveDir;
             }
@@ -231,19 +263,26 @@ public class MonMove : MonoBehaviour
     }
 
     /// <summary>
-    /// A* 경로 추적용: Hysteresis 없이 단순히 더 먼 축으로 스냅하는 함수.
-    /// A* 노드가 꼾으라고 하면 즉시 꼾어야 하므로 관성을 적용하면 안 됩니다.
+    /// A* 경로 추적용: 목표 타일까지의 부드러운 직교 축 스냅 함수.
+    /// 너무 날카롭게 축을 전환하면 Jitter(떨림)가 발생하므로 부드럽게 전환.
     /// </summary>
-    private Vector2 GetSimpleOrthogonalSnap(Vector2 targetPos)
+    private Vector2 GetSmoothOrthogonalSnap(Vector2 targetPos)
     {
         Vector2 dir = targetPos - (Vector2)transform.position;
         if (dir.sqrMagnitude < 0.01f) return Vector2.zero;
 
-        // 단순히 더 먼 축으로 이동 (Hysteresis 없음)
-        if (Mathf.Abs(dir.x) > Mathf.Abs(dir.y))
+        // 단순히 더 먼 축으로 이동하되, 이미 축 정렬이 많이 되었다면 그대로 밀고 감
+        if (Mathf.Abs(dir.x) > Mathf.Abs(dir.y) * 1.5f)
             return new Vector2(Mathf.Sign(dir.x), 0f);
-        else
+        else if (Mathf.Abs(dir.y) > Mathf.Abs(dir.x) * 1.5f)
             return new Vector2(0f, Mathf.Sign(dir.y));
+        else 
+        {
+            // 대각선 근처에 있을 경우, 기존 이동하던 축(lastPrimaryDir)을 우선시하여 Jitter 방지
+            bool preferX = Mathf.Abs(lastMoveDir.x) > 0.5f;
+            if (preferX) return new Vector2(Mathf.Sign(dir.x), 0f);
+            else return new Vector2(0f, Mathf.Sign(dir.y));
+        }
     }
 
     // ──────────────── 4방향 직교 이동 로직 (지그재그 방지 포함) ────────────────
@@ -251,6 +290,7 @@ public class MonMove : MonoBehaviour
     /// <summary>
     /// 목적지까지 무조건 상하좌우 1개 축으로만 움직이게 합니다. (대각선 방지)
     /// Hysteresis를 적용해 한 축으로 움직이기 시작하면 해당 축이 끝날 때까지 1자를 유지합니다.
+    /// 장애물에 막히면 슬라이딩(다른 축으로 우회)을 시도합니다.
     /// </summary>
     private Vector2 GetStrictOrthogonalDirection(Vector2 targetPos)
     {
@@ -264,23 +304,62 @@ public class MonMove : MonoBehaviour
         bool preferX = absX > absY;
 
         // Hysteresis (지그재그 방지): 이전에 이동하던 축을 계속 유지하려는 성질
-        // X축으로 이동 중이었고 그쪽으로 갈 길이 조금이라도(0.1f) 남아있으면 계속 X축 유지
         if (Mathf.Abs(lastPrimaryDir.x) > 0.5f && absX > 0.1f) preferX = true;
-        // Y축으로 이동 중이었고 갈 길이 남아있으면 계속 Y축 유지
         if (Mathf.Abs(lastPrimaryDir.y) > 0.5f && absY > 0.1f) preferX = false;
 
-        Vector2 finalDir;
+        Vector2 primaryDir = preferX ? new Vector2(Mathf.Sign(dir.x), 0f) : new Vector2(0f, Mathf.Sign(dir.y));
+        Vector2 secondaryDir = preferX ? new Vector2(0f, Mathf.Sign(dir.y)) : new Vector2(Mathf.Sign(dir.x), 0f);
 
-        if (preferX)
+        // 만약 주 방향이나 보조 방향의 목표 거리가 너무 짧으면(0.1f 미만) 억지로 이동하지 않도록 0으로 덮어씀
+        if (preferX && absY < 0.1f) secondaryDir = Vector2.zero;
+        if (!preferX && absX < 0.1f) secondaryDir = Vector2.zero;
+
+        // 장애물 슬라이딩: 주 이동 방향으로 벽이 막혀있다면 보조 방향으로 꺾음
+        LayerMask maskToCheck = obstacleLayerMask != 0 ? obstacleLayerMask : (AStarManager.Instance != null ? AStarManager.Instance.obstacleMask : targetLayerMask);
+        
+        // 슬라임 반경 고려하여 충돌 체크 (0.4f)
+        bool isPrimaryBlocked = Physics2D.CircleCast(transform.position, 0.4f, primaryDir, 0.3f, maskToCheck);
+        
+        Vector2 finalDir;
+        if (isPrimaryBlocked)
         {
-            finalDir = new Vector2(Mathf.Sign(dir.x), 0f);
+            // 이미 슬라이딩 중이라면, 방해받지 않는 이상 계속 같은 방향으로 슬라이딩 (지터 방지)
+            if (currentSlideDir != Vector2.zero && !Physics2D.CircleCast(transform.position, 0.4f, currentSlideDir, 0.3f, maskToCheck))
+            {
+                finalDir = currentSlideDir;
+            }
+            else if (secondaryDir != Vector2.zero && !Physics2D.CircleCast(transform.position, 0.4f, secondaryDir, 0.3f, maskToCheck))
+            {
+                // 보조 방향이 막혀있지 않다면 우선적으로 우회
+                currentSlideDir = secondaryDir;
+                finalDir = secondaryDir;
+            }
+            else
+            {
+                // ★ 핵심: 플레이어와 완벽하게 1자로 서 있을 때 벽에 막힌 상황.
+                // secondaryDir이 0이거나 막혔으므로, 강제로 직각(Perpendicular) 방향 중 뚫린 곳을 찾아서 슬라이딩 시도
+                Vector2 slide1 = new Vector2(-primaryDir.y, primaryDir.x); // 시계 방향 90도
+                Vector2 slide2 = new Vector2(primaryDir.y, -primaryDir.x); // 반시계 방향 90도
+
+                bool isSlide1Blocked = Physics2D.CircleCast(transform.position, 0.4f, slide1, 0.3f, maskToCheck);
+                bool isSlide2Blocked = Physics2D.CircleCast(transform.position, 0.4f, slide2, 0.3f, maskToCheck);
+
+                if (!isSlide1Blocked) currentSlideDir = slide1;
+                else if (!isSlide2Blocked) currentSlideDir = slide2;
+                else currentSlideDir = Vector2.zero; // 양옆도 막혔으면 정지 (A*가 알아서 경로 재계산할 것임)
+                
+                finalDir = currentSlideDir;
+            }
         }
         else
         {
-            finalDir = new Vector2(0f, Mathf.Sign(dir.y));
+            currentSlideDir = Vector2.zero;
+            finalDir = primaryDir;
         }
 
-        lastPrimaryDir = finalDir;
+        // 실제 이동인 finalDir은 저장하되, Hysteresis 기준은 주방향(primaryDir)으로 유지해야
+        // 슬라이딩 도중에도 목표를 향한 원래의 목적(X or Y 접근)을 잃지 않음
+        if (finalDir != Vector2.zero) lastPrimaryDir = primaryDir;
         return finalDir;
     }
 
@@ -288,6 +367,16 @@ public class MonMove : MonoBehaviour
     {
         if (rb != null)
             rb.linearVelocity = Vector2.zero;
+    }
+
+    /// <summary>
+    /// 넉백되거나 강제로 이동을 멈춰야 할 때, 기존 진행 중이던 A* 경로를 무효화합니다.
+    /// </summary>
+    public void InvalidatePath()
+    {
+        aStarPath = null;
+        isPathfinding = false;
+        currentPathIndex = 0;
     }
 
     // ──────────────── 거리 및 감지 판별 ────────────────
@@ -327,7 +416,24 @@ public class MonMove : MonoBehaviour
 
     private void SetNewPatrolTarget()
     {
-        patrolTarget = spawnPosition + Random.insideUnitCircle * patrolRadius;
+        // 최장 10번 재시도하여 벽 안쪽이 아닌 유효한 이동 지점을 찾음
+        LayerMask maskToCheck = obstacleLayerMask != 0 ? obstacleLayerMask : (AStarManager.Instance != null ? AStarManager.Instance.obstacleMask : targetLayerMask);
+
+        for (int i = 0; i < 10; i++)
+        {
+            Vector2 randomTarget = spawnPosition + Random.insideUnitCircle * patrolRadius;
+            
+            // 타겟 지점에 장애물이 있는지 확인 (반경 0.4f)
+            if (!Physics2D.OverlapCircle(randomTarget, 0.4f, maskToCheck))
+            {
+                patrolTarget = randomTarget;
+                return;
+            }
+        }
+        
+        // 10번 실패하면 제자리 유지 (벽에 끼어 진동하는 현상 방지)
+        patrolTarget = transform.position;
+        Debug.LogWarning($"[MonMove] 배회 목적지를 10번이나 찾지 못해 제자리로 설정합니다. 검사한 LayerMask: {maskToCheck.value}");
     }
 
     // ──────────────── Trigger 감지 로직 ────────────────

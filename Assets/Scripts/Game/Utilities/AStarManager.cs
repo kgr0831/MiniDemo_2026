@@ -71,6 +71,13 @@ public class AStarManager : MonoBehaviour
         int startY = Mathf.Clamp(centerNode.gridY - updateTilesY, 0, gridSizeY - 1);
         int endY = Mathf.Clamp(centerNode.gridY + updateTilesY, 0, gridSizeY - 1);
 
+        // ★ 버그 수정 (#12): 갱신 범위 제한 (최대 8타일 반경)
+        int maxUpdateTiles = Mathf.RoundToInt(8f / nodeDiameter);
+        startX = Mathf.Max(startX, centerNode.gridX - maxUpdateTiles);
+        endX = Mathf.Min(endX, centerNode.gridX + maxUpdateTiles);
+        startY = Mathf.Max(startY, centerNode.gridY - maxUpdateTiles);
+        endY = Mathf.Min(endY, centerNode.gridY + maxUpdateTiles);
+
         for (int x = startX; x <= endX; x++)
         {
             for (int y = startY; y <= endY; y++)
@@ -83,6 +90,8 @@ public class AStarManager : MonoBehaviour
             }
         }
     }
+    // ★ 최적화 (#2): gCost 초기화를 O(1)로 만들기 위한 탐색 ID 패턴
+    private int currentSearchId = 0;
 
     /// <summary>
     /// 시작점에서 목표점까지 4방향을 바탕으로 길을 찾아 노드의 좌표 리스트를 반환합니다.
@@ -100,33 +109,23 @@ public class AStarManager : MonoBehaviour
         if (!targetNode.walkable) targetNode = FindNearestWalkable(targetNode);
         if (startNode == null || targetNode == null) return null;
 
-        // gCost/hCost/parent 초기화 (이전 탐색 잔여 데이터 방지)
-        for (int x = 0; x < gridSizeX; x++)
-            for (int y = 0; y < gridSizeY; y++)
-            {
-                grid[x, y].gCost = int.MaxValue;
-                grid[x, y].hCost = 0;
-                grid[x, y].parent = null;
-            }
+        currentSearchId++; // 새 탐색 ID 발급
+
+        // ★ 최적화 (#1): 리스트 대신 최소 힙 사용 O(log N)
+        Heap<Node> openSet = new Heap<Node>(gridSizeX * gridSizeY);
+        HashSet<Node> closedSet = new HashSet<Node>();
+        
+        // 탐색 ID 초기화
+        startNode.searchId = currentSearchId;
         startNode.gCost = 0;
         startNode.hCost = GetDistance(startNode, targetNode);
+        startNode.parent = null;
 
-        List<Node> openSet = new List<Node>();
-        HashSet<Node> closedSet = new HashSet<Node>();
         openSet.Add(startNode);
 
         while (openSet.Count > 0)
         {
-            Node currentNode = openSet[0];
-            for (int i = 1; i < openSet.Count; i++)
-            {
-                if (openSet[i].fCost < currentNode.fCost || openSet[i].fCost == currentNode.fCost && openSet[i].hCost < currentNode.hCost)
-                {
-                    currentNode = openSet[i];
-                }
-            }
-
-            openSet.Remove(currentNode);
+            Node currentNode = openSet.RemoveFirst();
             closedSet.Add(currentNode);
 
             if (currentNode == targetNode)
@@ -139,6 +138,15 @@ public class AStarManager : MonoBehaviour
                 if (!neighbour.walkable || closedSet.Contains(neighbour)) 
                     continue;
 
+                // 새로 발견된 노드면 현재 탐색 ID로 갱신 (전체 초기화 대체)
+                if (neighbour.searchId != currentSearchId)
+                {
+                    neighbour.searchId = currentSearchId;
+                    neighbour.gCost = int.MaxValue;
+                    neighbour.hCost = 0;
+                    neighbour.parent = null;
+                }
+
                 int newMovementCostToNeighbour = currentNode.gCost + GetDistance(currentNode, neighbour);
                 if (newMovementCostToNeighbour < neighbour.gCost || !openSet.Contains(neighbour))
                 {
@@ -148,6 +156,8 @@ public class AStarManager : MonoBehaviour
 
                     if (!openSet.Contains(neighbour))
                         openSet.Add(neighbour);
+                    else
+                        openSet.UpdateItem(neighbour);
                 }
             }
         }
@@ -179,29 +189,39 @@ public class AStarManager : MonoBehaviour
     
     /// <summary>
     /// 주어진 노드가 장애물 위에 있을 때, 가장 가까운 걸을 수 있는 노드를 찾아 반환합니다.
+    /// BFS 기반으로 찐 최단거리를 찾도록 수정합니다.
     /// </summary>
-    private Node FindNearestWalkable(Node node)
+    private Node FindNearestWalkable(Node startNode)
     {
-        // 나선형으로 바깥으로 탐색 (최대 5칸까지)
-        for (int radius = 1; radius <= 5; radius++)
+        Queue<Node> queue = new Queue<Node>();
+        HashSet<Node> visited = new HashSet<Node>();
+
+        queue.Enqueue(startNode);
+        visited.Add(startNode);
+
+        int maxSearchDepth = 40; // 무한 루프 방지
+        int count = 0;
+
+        while (queue.Count > 0 && count < maxSearchDepth)
         {
-            for (int dx = -radius; dx <= radius; dx++)
+            Node currentNode = queue.Dequeue();
+            count++;
+
+            if (currentNode.walkable)
             {
-                for (int dy = -radius; dy <= radius; dy++)
+                return currentNode;
+            }
+
+            foreach (Node neighbour in GetNeighbours(currentNode))
+            {
+                if (!visited.Contains(neighbour))
                 {
-                    if (Mathf.Abs(dx) != radius && Mathf.Abs(dy) != radius) continue; // 테두리만 검사
-                    
-                    int checkX = node.gridX + dx;
-                    int checkY = node.gridY + dy;
-                    
-                    if (checkX >= 0 && checkX < gridSizeX && checkY >= 0 && checkY < gridSizeY)
-                    {
-                        if (grid[checkX, checkY].walkable)
-                            return grid[checkX, checkY];
-                    }
+                    visited.Add(neighbour);
+                    queue.Enqueue(neighbour);
                 }
             }
         }
+
         return null; // 주변에 걸을 수 있는 타일이 없음
     }
 
@@ -231,8 +251,11 @@ public class AStarManager : MonoBehaviour
         float percentX = (worldPosition.x - transform.position.x + gridWorldSize.x / 2) / gridWorldSize.x;
         float percentY = (worldPosition.y - transform.position.y + gridWorldSize.y / 2) / gridWorldSize.y;
         
-        percentX = Mathf.Clamp01(percentX);
-        percentY = Mathf.Clamp01(percentY);
+        // ★ 버그 수정 (#10): 그리드 밖의 위치일 경우 null을 반환하여 잘못된 추적 방지
+        if (percentX < 0 || percentX > 1 || percentY < 0 || percentY > 1)
+        {
+            return null;
+        }
 
         int x = Mathf.RoundToInt((gridSizeX - 1) * percentX);
         int y = Mathf.RoundToInt((gridSizeY - 1) * percentY);
@@ -252,7 +275,7 @@ public class AStarManager : MonoBehaviour
         }
     }
 
-    public class Node
+    public class Node : IHeapItem<Node>
     {
         public bool walkable;
         public Vector2 worldPosition;
@@ -262,6 +285,9 @@ public class AStarManager : MonoBehaviour
         public int gCost;
         public int hCost;
         public Node parent;
+        
+        public int searchId; // gCost 초기화 방지용 탐색 플래그
+        int heapIndex;
 
         public Node(bool _walkable, Vector2 _worldPos, int _gridX, int _gridY)
         {
@@ -272,5 +298,135 @@ public class AStarManager : MonoBehaviour
         }
 
         public int fCost { get { return gCost + hCost; } }
+
+        public int HeapIndex
+        {
+            get { return heapIndex; }
+            set { heapIndex = value; }
+        }
+
+        public int CompareTo(Node nodeToCompare)
+        {
+            int compare = fCost.CompareTo(nodeToCompare.fCost);
+            if (compare == 0)
+            {
+                compare = hCost.CompareTo(nodeToCompare.hCost);
+            }
+            return -compare; // IHeapItem은 더 높은 우선순위(낮은 Cost)를 1로 처리해야 함
+        }
+    }
+
+    // ★ 성능 개선 (#1): Priority Queue(Heap) 구현
+    public interface IHeapItem<T> : System.IComparable<T>
+    {
+        int HeapIndex { get; set; }
+    }
+
+    public class Heap<T> where T : IHeapItem<T>
+    {
+        T[] items;
+        int currentItemCount;
+
+        public Heap(int maxHeapSize)
+        {
+            items = new T[maxHeapSize];
+        }
+
+        public void Add(T item)
+        {
+            item.HeapIndex = currentItemCount;
+            items[currentItemCount] = item;
+            SortUp(item);
+            currentItemCount++;
+        }
+
+        public T RemoveFirst()
+        {
+            T firstItem = items[0];
+            currentItemCount--;
+            items[0] = items[currentItemCount];
+            items[0].HeapIndex = 0;
+            SortDown(items[0]);
+            return firstItem;
+        }
+
+        public void UpdateItem(T item)
+        {
+            SortUp(item);
+        }
+
+        public int Count
+        {
+            get { return currentItemCount; }
+        }
+
+        public bool Contains(T item)
+        {
+            return Equals(items[item.HeapIndex], item);
+        }
+
+        void SortDown(T item)
+        {
+            while (true)
+            {
+                int childIndexLeft = item.HeapIndex * 2 + 1;
+                int childIndexRight = item.HeapIndex * 2 + 2;
+                int swapIndex = 0;
+
+                if (childIndexLeft < currentItemCount)
+                {
+                    swapIndex = childIndexLeft;
+
+                    if (childIndexRight < currentItemCount)
+                    {
+                        if (items[childIndexLeft].CompareTo(items[childIndexRight]) < 0)
+                        {
+                            swapIndex = childIndexRight;
+                        }
+                    }
+
+                    if (item.CompareTo(items[swapIndex]) < 0)
+                    {
+                        Swap(item, items[swapIndex]);
+                    }
+                    else
+                    {
+                        return;
+                    }
+                }
+                else
+                {
+                    return;
+                }
+            }
+        }
+
+        void SortUp(T item)
+        {
+            int parentIndex = (item.HeapIndex - 1) / 2;
+
+            while (true)
+            {
+                T parentItem = items[parentIndex];
+                if (item.CompareTo(parentItem) > 0)
+                {
+                    Swap(item, parentItem);
+                }
+                else
+                {
+                    break;
+                }
+                parentIndex = (item.HeapIndex - 1) / 2;
+            }
+        }
+
+        void Swap(T itemA, T itemB)
+        {
+            items[itemA.HeapIndex] = itemB;
+            items[itemB.HeapIndex] = itemA;
+            int itemAIndex = itemA.HeapIndex;
+            itemA.HeapIndex = itemB.HeapIndex;
+            itemB.HeapIndex = itemAIndex;
+        }
     }
 }
