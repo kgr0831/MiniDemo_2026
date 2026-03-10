@@ -13,7 +13,8 @@ GameObject:
   - component: {fileID: 7104311637918640917}
   - component: {fileID: 141919275366645029}
   - component: {fileID: 7306402391999498553}
-  m_Layer: 0
+  - component: {fileID: 7712297978366551215}
+  m_Layer: 6
   m_Name: Tree
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -191,3 +192,17 @@ BoxCollider2D:
   m_AutoTiling: 0
   m_Size: {x: 0.61769795, y: 0.9462161}
   m_EdgeRadius: 0
+--- !u!114 &7712297978366551215
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3478623657885510880}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9c6c5549d48a5834891140a58b2ad70c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::YSortOrder
+  sortingPrecision: 100
+  yOffset: 0
